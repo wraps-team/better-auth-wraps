@@ -271,3 +271,150 @@ describe('createContactSync — user deleted', () => {
     });
   });
 });
+
+describe('createContactSync — attribution', () => {
+  const CONTEXT = {
+    path: '/sign-up/email',
+    headers: new Headers({
+      cookie: `wraps_attribution=${encodeURIComponent(
+        JSON.stringify({ utm_source: 'reddit', utm_campaign: 'launch', plan: 'enterprise' })
+      )}`,
+    }),
+  };
+
+  it('is off unless asked for', async () => {
+    const client = fakeClient();
+    const sync = createContactSync({ apiKey: 'k' }, client);
+
+    await sync.onUserCreated(USER, CONTEXT);
+
+    const body = client.POST.mock.calls[0]?.[1]?.body as Record<string, unknown>;
+    expect('properties' in body).toBe(false);
+    expect(client.track).toHaveBeenCalledWith('user.signed_up', {
+      contactId: 'con_1',
+      properties: { method: 'email', source: 'better-auth' },
+    });
+  });
+
+  it('lands on both the contact and the signup event', async () => {
+    const client = fakeClient();
+    const sync = createContactSync({ apiKey: 'k', attribution: true }, client);
+
+    await sync.onUserCreated(USER, CONTEXT);
+
+    expect(client.POST).toHaveBeenCalledWith('/v1/contacts/', {
+      body: expect.objectContaining({
+        properties: { utm_source: 'reddit', utm_campaign: 'launch' },
+      }),
+    });
+    expect(client.track).toHaveBeenCalledWith('user.signed_up', {
+      contactId: 'con_1',
+      properties: {
+        utm_source: 'reddit',
+        utm_campaign: 'launch',
+        method: 'email',
+        source: 'better-auth',
+      },
+    });
+  });
+
+  it('can be limited to one destination', async () => {
+    const client = fakeClient();
+    const sync = createContactSync({ apiKey: 'k', attribution: { event: false } }, client);
+
+    await sync.onUserCreated(USER, CONTEXT);
+
+    expect(client.POST).toHaveBeenCalledWith('/v1/contacts/', {
+      body: expect.objectContaining({
+        properties: { utm_source: 'reddit', utm_campaign: 'launch' },
+      }),
+    });
+    expect(client.track).toHaveBeenCalledWith('user.signed_up', {
+      contactId: 'con_1',
+      properties: { method: 'email', source: 'better-auth' },
+    });
+  });
+
+  it('loses to an explicit properties callback on key collisions', async () => {
+    const client = fakeClient();
+    const sync = createContactSync(
+      {
+        apiKey: 'k',
+        attribution: true,
+        properties: () => ({ utm_source: 'trusted', plan: 'free' }),
+      },
+      client
+    );
+
+    await sync.onUserCreated(USER, CONTEXT);
+
+    expect(client.POST).toHaveBeenCalledWith('/v1/contacts/', {
+      body: expect.objectContaining({
+        properties: { utm_source: 'trusted', utm_campaign: 'launch', plan: 'free' },
+      }),
+    });
+  });
+
+  it('cannot shadow the resolved signup method', async () => {
+    const client = fakeClient();
+    const sync = createContactSync(
+      { apiKey: 'k', attribution: { fields: ['method', 'source'] } },
+      client
+    );
+
+    await sync.onUserCreated(USER, {
+      path: '/callback/google',
+      headers: new Headers({
+        cookie: `wraps_attribution=${encodeURIComponent(
+          JSON.stringify({ method: 'spoofed', source: 'spoofed' })
+        )}`,
+      }),
+    });
+
+    expect(client.track).toHaveBeenCalledWith('user.signed_up', {
+      contactId: 'con_1',
+      properties: { method: 'oauth', provider: 'google', source: 'better-auth' },
+    });
+  });
+
+  it('reports a throwing custom parser without failing the sync', async () => {
+    const client = fakeClient();
+    const onError = vi.fn();
+    const sync = createContactSync(
+      {
+        apiKey: 'k',
+        onError,
+        attribution: {
+          parse: () => {
+            throw new Error('bad parser');
+          },
+        },
+      },
+      client
+    );
+
+    await sync.onUserCreated(USER, CONTEXT);
+
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'bad parser' }),
+      expect.objectContaining({ stage: 'attribution' })
+    );
+    expect(client.POST).toHaveBeenCalled();
+    expect(client.track).toHaveBeenCalled();
+  });
+});
+
+describe('createContactSync — hook context passthrough', () => {
+  it('hands the context to properties and shouldSync', async () => {
+    const client = fakeClient();
+    const properties = vi.fn(() => ({ plan: 'free' }));
+    const shouldSync = vi.fn(() => true);
+    const sync = createContactSync({ apiKey: 'k', properties, shouldSync }, client);
+    const context = { path: '/sign-up/email', headers: new Headers({ 'x-tenant': 'acme' }) };
+
+    await sync.onUserCreated(USER, context);
+
+    expect(shouldSync).toHaveBeenCalledWith(USER, context);
+    expect(properties).toHaveBeenCalledWith(USER, context);
+  });
+});

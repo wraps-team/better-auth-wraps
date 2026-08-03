@@ -13,8 +13,30 @@ export interface AuthUser {
   [key: string]: unknown;
 }
 
+/** Anything that reads a header by name — `Headers`, or a stand-in in tests. */
+export interface HeaderLike {
+  get(name: string): string | null | undefined;
+}
+
+/**
+ * Minimal shape of the hook context Better Auth passes to database hooks.
+ *
+ * Typed structurally because the context is `GenericEndpointContext | undefined`
+ * and its shape varies by the endpoint that triggered the write — and because a
+ * plugin should not break when Better Auth widens it.
+ */
+export interface HookContext {
+  path?: string;
+  params?: Record<string, string | undefined>;
+  body?: Record<string, unknown>;
+  /** Request headers. Where the attribution cookie and Referer come from. */
+  headers?: HeaderLike | null;
+  /** Some endpoints carry the raw request instead of hoisting the headers. */
+  request?: { headers?: HeaderLike | null } | null;
+}
+
 /** Where a failure happened, so `onError` handlers can route by stage. */
-export type WrapsErrorStage = 'contact' | 'event' | 'email';
+export type WrapsErrorStage = 'contact' | 'event' | 'email' | 'attribution';
 
 export interface WrapsErrorContext {
   stage: WrapsErrorStage;
@@ -134,6 +156,48 @@ export interface WrapsAuthEmailOptions {
 /** Signup method inferred from the request path that created the user. */
 export type SignupMethod = 'email' | 'oauth' | 'passkey' | 'magic-link' | 'otp' | 'unknown';
 
+/**
+ * How marketing attribution is pulled off the signup request.
+ *
+ * Defaults read a `wraps_attribution` cookie holding either JSON or a query
+ * string, keep the standard UTM/click-id keys, and merge them into both the
+ * contact record and the signup event.
+ */
+export interface AttributionOptions {
+  /** Cookie holding the attribution payload. @default 'wraps_attribution' */
+  cookieName?: string;
+
+  /**
+   * Keys to keep. Replaces the default allowlist outright — spread
+   * `DEFAULT_ATTRIBUTION_FIELDS` to extend it instead.
+   *
+   * The list matters: the cookie is browser-writable, so without it a visitor
+   * could stamp arbitrary fields onto their own contact record.
+   */
+  fields?: string[];
+
+  /**
+   * When the cookie is missing a field, fall back to the query string of the
+   * page that submitted the request. Never records the Referer itself as
+   * `referrer` — on a signup that is your own form, not the visitor's origin.
+   *
+   * @default true
+   */
+  fromReferer?: boolean;
+
+  /**
+   * Extract attribution yourself. Takes precedence over every other option,
+   * and its keys are not filtered through `fields`.
+   */
+  parse?: (context?: HookContext | null) => Record<string, unknown> | null | undefined;
+
+  /** Merge into the contact's properties. @default true */
+  contact?: boolean;
+
+  /** Merge into the signup event's properties. @default true */
+  event?: boolean;
+}
+
 export interface ContactSyncedPayload {
   userId: string;
   email: string;
@@ -170,11 +234,29 @@ export interface WrapsPluginOptions {
   /** Email subscription status for newly created contacts. @default 'active' */
   emailStatus?: 'active' | 'unsubscribed';
 
-  /** Extra properties stored on the contact record. */
-  properties?: (user: AuthUser) => Record<string, unknown>;
+  /**
+   * Capture marketing attribution from the signup request and store it on the
+   * contact and the signup event. `true` uses the defaults.
+   *
+   * Off by default: it writes browser-supplied data to your contact records,
+   * which should be a decision rather than something that starts happening on
+   * upgrade.
+   *
+   * @default false
+   */
+  attribution?: boolean | AttributionOptions;
+
+  /**
+   * Extra properties stored on the contact record.
+   *
+   * Receives the hook context, so anything on the request — cookies, headers,
+   * the endpoint path — can shape the contact. Wins over `attribution` on key
+   * collisions.
+   */
+  properties?: (user: AuthUser, context?: HookContext | null) => Record<string, unknown>;
 
   /** Return false to skip syncing a given user (e.g. internal test accounts). */
-  shouldSync?: (user: AuthUser) => boolean | Promise<boolean>;
+  shouldSync?: (user: AuthUser, context?: HookContext | null) => boolean | Promise<boolean>;
 
   /**
    * Patch the contact when the user's email or name changes.
