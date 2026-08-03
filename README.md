@@ -151,6 +151,65 @@ wraps({
 });
 ```
 
+### Attribution
+
+Where a signup came from is known at the request, and gone by the time you query the contact. Turn it on and the plugin reads it off the signup request and stores it on both the contact and the event:
+
+```ts
+wraps({
+  apiKey: process.env.WRAPS_API_KEY,
+  attribution: true,
+});
+```
+
+That's the whole setup. The contact gets `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `ref`, `referrer`, `landing_page`, `timestamp`, `gclid`, `fbclid`, and `msclkid` — whichever are present — and so does the `user.signed_up` event, so a workflow can branch on the campaign that produced the signup.
+
+It reads a `wraps_attribution` cookie holding either JSON or a query string. Set it wherever you already handle first touch — in Next.js, middleware is the usual place:
+
+```ts
+// middleware.ts — first touch wins, so don't overwrite an existing cookie
+if (!request.cookies.has('wraps_attribution')) {
+  response.cookies.set('wraps_attribution', JSON.stringify(params), { maxAge: 30 * 24 * 3600 });
+}
+```
+
+No cookie is fine too: the plugin falls back to the query string of the page that submitted the signup, which covers a visitor who lands on `/signup?utm_source=hn` and signs up on the spot.
+
+**Off by default,** because it writes browser-supplied data to your contact records, and that should be a decision rather than something that starts happening on upgrade.
+
+**The key list is an allowlist, not a suggestion.** The cookie is browser-writable, so anyone can put anything in it. Only known keys are kept, values are flattened to strings and capped at 512 characters, and nothing from the cookie can shadow the `method`, `provider`, or `source` the plugin reports on the event. Extend it deliberately:
+
+```ts
+import { DEFAULT_ATTRIBUTION_FIELDS } from '@wraps.dev/better-auth';
+
+attribution: {
+  cookieName: 'acme_attr',
+  fields: [...DEFAULT_ATTRIBUTION_FIELDS, 'partner_id'],
+  fromReferer: false,   // cookie only
+  event: false,         // contact only, keep the event lean
+  parse: (context) => ({ affiliate: context?.headers?.get('x-affiliate') }),
+}
+```
+
+`parse` replaces every other source and skips the allowlist — it's your code. If it throws, you get an `onError` with `stage: 'attribution'` and the signup carries on without attribution.
+
+### Anything else off the request
+
+`properties` and `shouldSync` both receive the Better Auth hook context, so anything on the request can shape the contact:
+
+```ts
+wraps({
+  apiKey: process.env.WRAPS_API_KEY,
+  properties: (user, context) => ({
+    plan: 'free',
+    invitedBy: context?.body?.inviteCode,
+  }),
+  shouldSync: (user, context) => context?.path !== '/admin/create-user',
+});
+```
+
+`properties` wins over `attribution` on key collisions — explicit beats ambient.
+
 ## Options
 
 ```ts
@@ -161,8 +220,9 @@ wraps({
   eventName: 'user.signed_up',        // or false to skip the event
   topicSlugs: [],
   emailStatus: 'active',
-  properties: (user) => ({ plan: 'free' }),
-  shouldSync: (user) => !user.email.endsWith('@internal.acme.com'),
+  attribution: false,                 // true, or { cookieName, fields, fromReferer, parse, contact, event }
+  properties: (user, context) => ({ plan: 'free' }),
+  shouldSync: (user, context) => !user.email.endsWith('@internal.acme.com'),
   syncOnUpdate: true,                 // patch the contact on email/name change
   syncOnDelete: false,                // or 'unsubscribe' | 'delete'
 

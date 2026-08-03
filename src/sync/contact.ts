@@ -1,6 +1,13 @@
 import { createPlatformClient, type PlatformClient } from '@wraps.dev/client';
-import type { AuthUser, ContactSyncedPayload, WrapsPluginOptions } from '../types';
-import { contactFieldsFromUser, type HookContext, resolveSignupMethod } from './resolve';
+import type {
+  AttributionOptions,
+  AuthUser,
+  ContactSyncedPayload,
+  HookContext,
+  WrapsPluginOptions,
+} from '../types';
+import { resolveAttribution } from './attribution';
+import { contactFieldsFromUser, resolveSignupMethod } from './resolve';
 
 /** Turn an openapi-fetch error payload into a message safe to surface. */
 function apiErrorMessage(error: unknown, status: number, fallback: string): string {
@@ -52,12 +59,37 @@ export function createContactSync(
     ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
   })
 ): ContactSync {
-  const report = (error: unknown, stage: 'contact' | 'event', user: AuthUser) => {
+  const report = (error: unknown, stage: 'contact' | 'event' | 'attribution', user: AuthUser) => {
     options.onError?.(error instanceof Error ? error : new Error(String(error)), {
       stage,
       user: { id: user.id, email: user.email },
     });
   };
+
+  const attributionOptions: AttributionOptions | null =
+    options.attribution === true ? {} : options.attribution || null;
+
+  /**
+   * Read attribution off the signup request.
+   *
+   * Swallows failures — only a custom `parse` can throw, and a broken parser
+   * should cost the attribution, not the signup.
+   */
+  function readAttribution(
+    user: AuthUser,
+    context?: HookContext | null
+  ): Record<string, string> | null {
+    if (!attributionOptions) {
+      return null;
+    }
+
+    try {
+      return resolveAttribution(context, attributionOptions);
+    } catch (error) {
+      report(error, 'attribution', user);
+      return null;
+    }
+  }
 
   /**
    * Create the contact, falling back to a patch when it already exists.
@@ -66,14 +98,23 @@ export function createContactSync(
    * they signed up — a newsletter subscriber converting, say — so it never
    * reaches `onError`.
    */
-  async function upsertContact(user: AuthUser): Promise<ContactSyncedPayload | null> {
+  async function upsertContact(
+    user: AuthUser,
+    context?: HookContext | null,
+    attribution?: Record<string, string> | null
+  ): Promise<ContactSyncedPayload | null> {
     const fields = contactFieldsFromUser(user);
-    const properties = options.properties?.(user);
+
+    // `properties` last: an explicit callback beats whatever the browser sent.
+    const properties = {
+      ...(attribution ?? {}),
+      ...options.properties?.(user, context),
+    };
 
     const body = {
       ...fields,
       emailStatus: options.emailStatus ?? ('active' as const),
-      ...(properties && Object.keys(properties).length > 0 ? { properties } : {}),
+      ...(Object.keys(properties).length > 0 ? { properties } : {}),
       ...(options.topicSlugs?.length ? { topicSlugs: options.topicSlugs } : {}),
     };
 
@@ -120,14 +161,19 @@ export function createContactSync(
       return;
     }
 
-    if (options.shouldSync && !(await options.shouldSync(user))) {
+    if (options.shouldSync && !(await options.shouldSync(user, context))) {
       return;
     }
 
+    const attribution = readAttribution(user, context);
     let synced: ContactSyncedPayload | null = null;
 
     try {
-      synced = await upsertContact(user);
+      synced = await upsertContact(
+        user,
+        context,
+        attributionOptions?.contact === false ? null : attribution
+      );
       if (synced) {
         await options.onContactSynced?.(synced);
       }
@@ -148,6 +194,9 @@ export function createContactSync(
           ? { contactId: synced.contactId }
           : { contactExternalId: user.id, contactEmail: user.email }),
         properties: {
+          // Attribution first: the resolved signup method is ours to report
+          // and a stray `method` key in a cookie must not shadow it.
+          ...(attributionOptions?.event === false ? {} : (attribution ?? {})),
           method,
           ...(provider ? { provider } : {}),
           source: 'better-auth',

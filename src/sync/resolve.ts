@@ -1,4 +1,6 @@
-import type { AuthUser, SignupMethod } from '../types';
+import type { AuthUser, HookContext, SignupMethod } from '../types';
+
+export type { HookContext } from '../types';
 
 /**
  * Split a Better Auth display name into first/last.
@@ -24,17 +26,6 @@ export function splitName(name?: string | null): {
     firstName: trimmed.slice(0, spaceIndex),
     lastName: trimmed.slice(spaceIndex + 1).trim() || undefined,
   };
-}
-
-/**
- * Minimal shape of the hook context Better Auth passes to database hooks.
- * Typed loosely because the context is `GenericEndpointContext | undefined`
- * and its shape varies by the endpoint that triggered the write.
- */
-export interface HookContext {
-  path?: string;
-  params?: Record<string, string | undefined>;
-  body?: Record<string, unknown>;
 }
 
 /**
