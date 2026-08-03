@@ -39,17 +39,6 @@ function conflictField(error: unknown): 'email' | 'externalId' | 'phone' | 'unkn
   return 'unknown';
 }
 
-/**
- * Whether a value survives a round trip through a URL path segment.
- *
- * The Platform API resolves `/v1/contacts/{id}` against raw path params — it
- * does not percent-decode them. Anything `encodeURIComponent` would escape
- * therefore has to be looked up some other way, or the request silently 404s.
- */
-function isPathSafe(value: string): boolean {
-  return encodeURIComponent(value) === value;
-}
-
 export interface ContactSync {
   onUserCreated: (user: AuthUser, context?: HookContext | null) => Promise<void>;
   onUserUpdated: (user: AuthUser) => Promise<void>;
@@ -69,48 +58,6 @@ export function createContactSync(
       user: { id: user.id, email: user.email },
     });
   };
-
-  /**
-   * Find an existing contact's UUID by email.
-   *
-   * `search` is a substring match across email and phone, so the exact address
-   * still has to be picked out of the results.
-   */
-  async function findContactIdByEmail(email: string): Promise<string | undefined> {
-    // Checked via `response.ok` rather than `error`: the list endpoint declares
-    // no error responses, so openapi-fetch types `error` as `never` and
-    // narrowing on it collapses the whole result to `never`.
-    const result = await client.GET('/v1/contacts/', {
-      params: { query: { search: email, pageSize: '100' } },
-    });
-
-    if (!result.response.ok) {
-      throw new Error(
-        apiErrorMessage(
-          (result as { error?: unknown }).error,
-          result.response.status,
-          'Failed to look up Wraps contact'
-        )
-      );
-    }
-
-    const target = email.toLowerCase();
-    return result.data?.contacts?.find((c) => c.email?.toLowerCase() === target)?.id;
-  }
-
-  /**
-   * The identifier to address an existing contact with in `/v1/contacts/{id}`.
-   *
-   * Better Auth's default ids are URL-safe, so the externalId goes straight in.
-   * A custom `generateId` that produces anything else falls back to resolving
-   * the contact's UUID by email.
-   */
-  async function contactPathId(user: AuthUser): Promise<string | undefined> {
-    if (isPathSafe(user.id)) {
-      return user.id;
-    }
-    return user.email ? await findContactIdByEmail(user.email) : undefined;
-  }
 
   /**
    * Create the contact, falling back to a patch when it already exists.
@@ -150,21 +97,12 @@ export function createContactSync(
       return null;
     }
 
-    // Emails always contain an `@`, so they can never be used as a path param.
-    // Resolve to the contact's UUID first.
-    const lookupKey =
-      field === 'externalId' && isPathSafe(user.id)
-        ? user.id
-        : await findContactIdByEmail(user.email);
-
-    if (!lookupKey) {
-      // The create said this email was taken but the search cannot find it.
-      // Most likely a concurrent delete. Nothing left to reconcile.
-      return null;
-    }
-
+    // `/v1/contacts/{id}` resolves a UUID, an email, or an externalId. Address
+    // the contact by whichever field actually collided — patching by externalId
+    // when the collision was on email would 404, because that contact came from
+    // somewhere else and has no externalId yet.
     const patched = await client.PATCH('/v1/contacts/{id}', {
-      params: { path: { id: lookupKey } },
+      params: { path: { id: field === 'externalId' ? user.id : user.email } },
       body,
     });
 
@@ -226,14 +164,9 @@ export function createContactSync(
     }
 
     try {
-      const id = await contactPathId(user);
-      if (!id) {
-        return;
-      }
-
       const fields = contactFieldsFromUser(user);
       const patched = await client.PATCH('/v1/contacts/{id}', {
-        params: { path: { id } },
+        params: { path: { id: user.id } },
         body: fields,
       });
 
@@ -256,18 +189,13 @@ export function createContactSync(
     }
 
     try {
-      const id = await contactPathId(user);
-      if (!id) {
-        return;
-      }
-
       const result =
         mode === 'delete'
           ? await client.DELETE('/v1/contacts/{id}', {
-              params: { path: { id } },
+              params: { path: { id: user.id } },
             })
           : await client.PATCH('/v1/contacts/{id}', {
-              params: { path: { id } },
+              params: { path: { id: user.id } },
               body: { emailStatus: 'unsubscribed' as const },
             });
 

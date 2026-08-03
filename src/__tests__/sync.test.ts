@@ -18,10 +18,9 @@ function fail(status: number, message: string) {
 }
 
 function fakeClient(
-  overrides: Partial<Record<'GET' | 'POST' | 'PATCH' | 'DELETE' | 'track', unknown>> = {}
+  overrides: Partial<Record<'POST' | 'PATCH' | 'DELETE' | 'track', unknown>> = {}
 ) {
   const client = {
-    GET: vi.fn(async () => ok({ contacts: [{ id: 'con_existing', email: 'ada@example.com' }] })),
     POST: vi.fn(async () => ok({ id: 'con_1' })),
     PATCH: vi.fn(async () => ok({ id: 'con_1' })),
     DELETE: vi.fn(async () => ok({ success: true })),
@@ -123,53 +122,14 @@ describe('createContactSync — user created', () => {
 
     await sync.onUserCreated(USER);
 
-    // Resolved to a UUID first: the API does not percent-decode path params,
-    // so an email can never go into `/v1/contacts/{id}` directly.
-    expect(client.GET).toHaveBeenCalledWith('/v1/contacts/', {
-      params: { query: { search: 'ada@example.com', pageSize: '100' } },
-    });
+    // Addressed by the field that actually collided. `/v1/contacts/{id}` takes
+    // a UUID, an email, or an externalId.
     expect(client.PATCH).toHaveBeenCalledWith('/v1/contacts/{id}', {
-      params: { path: { id: 'con_existing' } },
+      params: { path: { id: 'ada@example.com' } },
       body: expect.objectContaining({ externalId: 'usr_1' }),
     });
     // A pre-existing contact is the normal newsletter-subscriber-converts path,
     // not something worth waking anyone up for.
-    expect(onError).not.toHaveBeenCalled();
-  });
-
-  it('matches the exact address, not a substring hit from the search', async () => {
-    const client = fakeClient({
-      POST: vi.fn(async () => fail(409, 'Contact with this email already exists')),
-      GET: vi.fn(async () =>
-        ok({
-          contacts: [
-            { id: 'con_other', email: 'not-ada@example.com' },
-            { id: 'con_right', email: 'Ada@Example.com' },
-          ],
-        })
-      ),
-    });
-    const sync = createContactSync({ apiKey: 'k', onError }, client);
-
-    await sync.onUserCreated(USER);
-
-    expect(client.PATCH).toHaveBeenCalledWith('/v1/contacts/{id}', {
-      params: { path: { id: 'con_right' } },
-      body: expect.anything(),
-    });
-  });
-
-  it('gives up quietly when the conflicting contact can no longer be found', async () => {
-    const client = fakeClient({
-      POST: vi.fn(async () => fail(409, 'Contact with this email already exists')),
-      GET: vi.fn(async () => ok({ contacts: [] })),
-    });
-    const sync = createContactSync({ apiKey: 'k', onError }, client);
-
-    await sync.onUserCreated(USER);
-
-    expect(client.PATCH).not.toHaveBeenCalled();
-    expect(client.track).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
   });
 
@@ -181,24 +141,8 @@ describe('createContactSync — user created', () => {
 
     await sync.onUserCreated(USER);
 
-    expect(client.GET).not.toHaveBeenCalled();
     expect(client.PATCH).toHaveBeenCalledWith('/v1/contacts/{id}', {
       params: { path: { id: 'usr_1' } },
-      body: expect.anything(),
-    });
-  });
-
-  it('resolves by email when the user id would not survive a URL path', async () => {
-    const client = fakeClient({
-      POST: vi.fn(async () => fail(409, 'Contact with this externalId already exists')),
-    });
-    const sync = createContactSync({ apiKey: 'k', onError }, client);
-
-    await sync.onUserCreated({ ...USER, id: 'ada@example.com' });
-
-    expect(client.GET).toHaveBeenCalled();
-    expect(client.PATCH).toHaveBeenCalledWith('/v1/contacts/{id}', {
-      params: { path: { id: 'con_existing' } },
       body: expect.anything(),
     });
   });

@@ -180,9 +180,6 @@ describe('wraps plugin — failure isolation', () => {
       if (call.method === 'POST' && call.path === '/v1/contacts/') {
         return json({ error: 'Contact with this email already exists' }, 409);
       }
-      if (call.method === 'GET' && call.path === '/v1/contacts/') {
-        return json({ contacts: [{ id: 'con_existing', email: 'ada@example.com' }], total: 1 });
-      }
       if (call.path.startsWith('/v1/contacts/')) {
         return json({ id: 'con_existing' });
       }
@@ -196,10 +193,12 @@ describe('wraps plugin — failure isolation', () => {
 
     await auth.api.signUpEmail({ body: SIGNUP });
 
-    // Addressed by UUID, never by the raw email: the API matches path params
-    // without percent-decoding them, so `/v1/contacts/ada%40example.com` 404s.
+    // Addressed by the field that collided. openapi-fetch percent-encodes the
+    // path param on the wire; the API decodes it back before resolving, so the
+    // `@` survives the round trip.
     const patch = calls.find((c) => c.method === 'PATCH');
-    expect(patch?.path).toBe('/v1/contacts/con_existing');
+    expect(patch?.path).toBe('/v1/contacts/ada%40example.com');
+    expect(decodeURIComponent(patch?.path ?? '')).toBe('/v1/contacts/ada@example.com');
     expect(onError).not.toHaveBeenCalled();
 
     const eventCall = calls.find((c) => c.path === '/v1/events/');
