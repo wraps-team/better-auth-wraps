@@ -1,6 +1,6 @@
 {
   "name": "@wraps.dev/better-auth",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Better Auth plugin for Wraps. Sync signups to contacts, trigger workflows, and send verification, password reset, magic link, OTP, and invitation emails through your own AWS SES account.",
   "type": "module",
   "main": "dist/index.cjs",
