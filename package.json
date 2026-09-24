@@ -68,7 +68,7 @@
     "@types/node": "^24.10.0",
     "@vitest/coverage-v8": "^4.0.8",
     "@wraps.dev/email": "^0.12.2",
-    "better-auth": "^1.6.23",
+    "better-auth": "^1.7.5",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.8"

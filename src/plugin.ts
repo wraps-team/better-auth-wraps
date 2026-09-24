@@ -26,7 +26,10 @@ import type { AuthUser, WrapsPluginOptions } from './types';
  * });
  * ```
  */
-export const wraps = (options: WrapsPluginOptions = {}) => {
+// Declared, not `satisfies`: an inferred return type gets inlined into the
+// published .d.ts against whatever better-auth we built with, and stops
+// matching the consumer's BetterAuthPlugin on the next minor (1.7.3 did it).
+export const wraps = (options: WrapsPluginOptions = {}): BetterAuthPlugin => {
   const sync = options.apiKey ? createContactSync(options) : null;
   const emails = options.email
     ? wrapsAuthEmails({ onError: options.onError, ...options.email })
@@ -120,7 +123,7 @@ export const wraps = (options: WrapsPluginOptions = {}) => {
         },
       };
     },
-  } satisfies BetterAuthPlugin;
+  };
 };
 
 export type WrapsPlugin = ReturnType<typeof wraps>;
