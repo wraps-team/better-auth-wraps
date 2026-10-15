@@ -67,26 +67,31 @@ Type inference only. Everything happens server-side and your API key never reach
 
 ## Auth emails
 
-The plugin fills in the senders it can reach. For the ones that belong to other plugins, build them once and pass them in:
+The plugin fills in the senders it can reach: `sendVerificationEmail`, `sendResetPassword` and `onPasswordReset`. The rest belong to other plugins' options, which a plugin can't reach. Take those from `plugin.emails` so every auth email shares one SES client:
 
 ```ts
-import { wrapsAuthEmails } from '@wraps.dev/better-auth';
+import { wraps } from '@wraps.dev/better-auth';
 import { emailOTP, magicLink, organization } from 'better-auth/plugins';
 
-const emails = wrapsAuthEmails({
-  from: 'Acme <auth@acme.com>',
-  appName: 'Acme',
-  appUrl: 'https://app.acme.com', // used to build the invitation link
+const plugin = wraps({
+  email: {
+    from: 'Acme <auth@acme.com>',
+    appName: 'Acme',
+    appUrl: 'https://app.acme.com', // invitation links go to /accept-invitation/:id here
+  },
 });
 
 betterAuth({
   plugins: [
-    magicLink({ sendMagicLink: emails.magicLink }),
-    emailOTP({ sendVerificationOTP: emails.otp }),
-    organization({ sendInvitationEmail: emails.invitation }),
+    plugin,
+    magicLink({ sendMagicLink: plugin.emails.magicLink }),
+    emailOTP({ sendVerificationOTP: plugin.emails.otp }),
+    organization({ sendInvitationEmail: plugin.emails.invitation }),
   ],
 });
 ```
+
+`plugin.emails` is typed as always present when you pass `email`, and `undefined` otherwise. Without the plugin, build the same senders with `wrapsAuthEmails(emailOptions)`.
 
 Available senders: `verification`, `resetPassword`, `passwordChanged`, `magicLink`, `otp`, `invitation`.
 
