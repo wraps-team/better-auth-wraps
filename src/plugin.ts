@@ -1,8 +1,22 @@
 import type { BetterAuthOptions, BetterAuthPlugin } from 'better-auth';
-import { wrapsAuthEmails } from './email/senders';
+import { type WrapsAuthEmails, wrapsAuthEmails } from './email/senders';
 import { createContactSync } from './sync/contact';
 import type { HookContext } from './sync/resolve';
-import type { AuthUser, WrapsPluginOptions } from './types';
+import type { AuthUser, WrapsAuthEmailOptions, WrapsPluginOptions } from './types';
+
+/**
+ * The plugin, plus the auth email senders it built.
+ *
+ * `emails` covers the senders the plugin can't fill in itself because they
+ * belong to other plugins' options: organization invitations, magic links and
+ * OTP. Pass them in from here so every auth email shares one SES client.
+ */
+// Kept as an intersection with the wide BetterAuthPlugin, not an inferred
+// type, for the same reason wraps() is declared: see the note below.
+export type WrapsPlugin = BetterAuthPlugin & {
+  /** Undefined unless `email` is configured. */
+  emails: WrapsAuthEmails | undefined;
+};
 
 /**
  * Better Auth plugin for Wraps.
@@ -16,20 +30,24 @@ import type { AuthUser, WrapsPluginOptions } from './types';
  *
  * @example
  * ```ts
+ * const plugin = wraps({
+ *   apiKey: process.env.WRAPS_API_KEY,
+ *   email: { from: 'Acme <auth@acme.com>', appName: 'Acme', appUrl: 'https://app.acme.com' },
+ * });
+ *
  * export const auth = betterAuth({
- *   plugins: [
- *     wraps({
- *       apiKey: process.env.WRAPS_API_KEY,
- *       email: { from: 'Acme <auth@acme.com>', appName: 'Acme' },
- *     }),
- *   ],
+ *   plugins: [plugin, organization({ sendInvitationEmail: plugin.emails.invitation })],
  * });
  * ```
  */
 // Declared, not `satisfies`: an inferred return type gets inlined into the
 // published .d.ts against whatever better-auth we built with, and stops
 // matching the consumer's BetterAuthPlugin on the next minor (1.7.3 did it).
-export const wraps = (options: WrapsPluginOptions = {}): BetterAuthPlugin => {
+export function wraps(
+  options: WrapsPluginOptions & { email: WrapsAuthEmailOptions }
+): WrapsPlugin & { emails: WrapsAuthEmails };
+export function wraps(options?: WrapsPluginOptions): WrapsPlugin;
+export function wraps(options: WrapsPluginOptions = {}): WrapsPlugin {
   const sync = options.apiKey ? createContactSync(options) : null;
   const emails = options.email
     ? wrapsAuthEmails({ onError: options.onError, ...options.email })
@@ -53,6 +71,7 @@ export const wraps = (options: WrapsPluginOptions = {}): BetterAuthPlugin => {
 
   return {
     id: 'wraps',
+    emails: emails ?? undefined,
 
     init() {
       return {
@@ -124,6 +143,4 @@ export const wraps = (options: WrapsPluginOptions = {}): BetterAuthPlugin => {
       };
     },
   };
-};
-
-export type WrapsPlugin = ReturnType<typeof wraps>;
+}
