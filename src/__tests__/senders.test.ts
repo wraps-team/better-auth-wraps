@@ -87,6 +87,36 @@ describe('wrapsAuthEmails', () => {
     expect(context.stage).toBe('email');
   });
 
+  it('sends an email rendered by the app, on the same client and sender', async () => {
+    const emails = wrapsAuthEmails({ from: 'auth@acme.com', replyTo: 'support@acme.com' });
+
+    await emails.verification({ user, url: URL });
+    await emails.send({ to: 'ada@example.com', subject: 'Hello', html: '<p>Hi</p>', text: 'Hi' });
+
+    expect(constructed).toHaveLength(1);
+    expect(send.mock.calls[1]?.[0]).toEqual({
+      from: 'auth@acme.com',
+      to: 'ada@example.com',
+      subject: 'Hello',
+      html: '<p>Hi</p>',
+      text: 'Hi',
+      replyTo: 'support@acme.com',
+    });
+  });
+
+  it('reports a failed send of an app-rendered email instead of throwing', async () => {
+    send.mockRejectedValueOnce(new Error('SES throttled'));
+    const onError = vi.fn();
+    const emails = wrapsAuthEmails({ from: 'auth@acme.com', onError });
+
+    await expect(
+      emails.send({ to: 'ada@example.com', subject: 'Hello', html: '<p>Hi</p>', text: 'Hi' })
+    ).resolves.toBeUndefined();
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect((onError.mock.calls[0] as [Error])[0].message).toBe('SES throttled');
+  });
+
   it('uses a custom template when one is supplied', async () => {
     const emails = wrapsAuthEmails({
       from: 'auth@acme.com',

@@ -95,6 +95,19 @@ betterAuth({
 
 Available senders: `verification`, `resetPassword`, `passwordChanged`, `magicLink`, `otp`, `invitation`.
 
+For any other account email, render it yourself (`renderLayout` gives it the same layout) and send it with `plugin.emails.send({ to, subject, html, text })`. It uses the same client, sender and `onError`, and never throws:
+
+```ts
+const { html, text } = renderLayout({
+  brand: {},
+  appName: 'Acme',
+  previewText: 'Your Acme account was deleted',
+  heading: 'Your account was deleted',
+  paragraphs: ['Everything tied to it has been removed.'],
+});
+await plugin.emails.send({ to: user.email, subject: 'Your account was deleted', html, text });
+```
+
 ### The plugin never overrides your config
 
 Better Auth merges plugin options *under* your own, so anything you define wins. If you already have a `sendVerificationEmail`, the plugin leaves it alone. The senders it supplies are defaults that fill gaps.
@@ -103,7 +116,7 @@ It also never sets `emailAndPassword.enabled`. Configuring the email half will n
 
 ### AWS credentials
 
-Credentials follow the standard `@wraps.dev/email` resolution chain. Pass anything `WrapsEmailConfig` accepts through `ses`:
+Credentials follow the standard `@wraps.dev/email` resolution chain. Override it through `ses` (`WrapsSesOptions`): `client`, `region`, `credentials`, `roleArn`, `roleSessionName` or `endpoint`:
 
 ```ts
 wrapsAuthEmails({
@@ -241,7 +254,7 @@ wraps({
     configurationSetName: 'acme-auth',
     brand: { logoUrl, primaryColor, supportEmail, footerText },
     templates: { /* per-template overrides */ },
-    ses: { /* WrapsEmailConfig passthrough */ },
+    ses: { /* WrapsSesOptions: client, region, credentials, roleArn, ... */ },
   },
 
   // --- behaviour ---

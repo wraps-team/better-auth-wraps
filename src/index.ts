@@ -38,4 +38,5 @@ export type {
   WrapsErrorContext,
   WrapsErrorStage,
   WrapsPluginOptions,
+  WrapsSesOptions,
 } from './types';

@@ -116,6 +116,35 @@ export interface WrapsAuthEmailTemplates {
 }
 
 /**
+ * The `WrapsEmailConfig` fields that matter for sending, declared here so the
+ * type doesn't depend on the optional `@wraps.dev/email` peer.
+ *
+ * `client` is structural: a real `SESClient` fits, and so does any object with
+ * a `send(command)` method, such as a test fake or a local mail sink.
+ */
+export interface WrapsSesOptions {
+  /** Pre-configured SES client. Takes precedence over every other field. */
+  client?: { send(command: { input: unknown }): Promise<unknown> };
+  /** AWS region for SES. @default 'us-east-1' */
+  region?: string;
+  /** Static credentials or a provider. Falls back to the AWS credential chain. */
+  credentials?:
+    | { accessKeyId: string; secretAccessKey: string; sessionToken?: string }
+    | (() => Promise<{
+        accessKeyId: string;
+        secretAccessKey: string;
+        sessionToken?: string;
+        expiration?: Date;
+      }>);
+  /** IAM role to assume (OIDC federation or cross-account). */
+  roleArn?: string;
+  /** Session name for the assumed role. @default 'wraps-email-session' */
+  roleSessionName?: string;
+  /** Custom SES endpoint, e.g. LocalStack. */
+  endpoint?: string;
+}
+
+/**
  * Configuration for the auth email senders.
  *
  * Every field beyond `from` is optional. AWS credentials follow the standard
@@ -144,11 +173,8 @@ export interface WrapsAuthEmailOptions {
   configurationSetName?: string;
   brand?: WrapsAuthEmailBrand;
   templates?: WrapsAuthEmailTemplates;
-  /**
-   * Passed straight to the `WrapsEmail` constructor. Accepts everything
-   * `WrapsEmailConfig` does: `client`, `region`, `credentials`, `roleArn`.
-   */
-  ses?: Record<string, unknown>;
+  /** Passed straight to the `WrapsEmail` constructor. */
+  ses?: WrapsSesOptions;
   /** Called when a send fails. The auth flow is never blocked by a send error. */
   onError?: (error: Error, context: WrapsErrorContext) => void;
 }

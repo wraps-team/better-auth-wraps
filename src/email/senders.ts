@@ -44,6 +44,12 @@ export interface WrapsAuthEmails {
   otp: (data: { email: string; otp: string; type: OtpType }) => Promise<void>;
   /** Plug into `organization({ sendInvitationEmail })`. */
   invitation: (data: InvitationData) => Promise<void>;
+  /**
+   * Send an email you rendered yourself (see `renderLayout`) on the same
+   * client, with the same `from`, `replyTo` and configuration set. Like the
+   * other senders it reports a failure through `onError` and never throws.
+   */
+  send: (message: RenderedEmail & { to: string }) => Promise<void>;
 }
 
 /**
@@ -174,6 +180,10 @@ export function wrapsAuthEmails(options: WrapsAuthEmailOptions): WrapsAuthEmails
           brand,
         })
       );
+    },
+
+    async send({ to, ...rendered }) {
+      await deliver(to, rendered);
     },
   };
 }
